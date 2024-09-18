@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::thread;
 
 use async_channel::{bounded, Receiver, Sender};
 use async_dup::Arc;
@@ -24,26 +25,28 @@ async fn dispatch(receiver: Receiver<Event>) -> io::Result<()> {
 
     // Receive incoming events.
     while let Ok(event) = receiver.recv().await {
+	let tid = thread::current().id();
         // Process the event and format a message to send to clients.
         let output = match event {
             Event::Join(addr, stream) => {
                 map.insert(addr, stream);
-                format!("{} has joined\n", addr)
+                format!("{tid:?}|{:p}: {} has joined\n", &map, addr)
             }
             Event::Leave(addr) => {
                 map.remove(&addr);
-                format!("{} has left\n", addr)
+                format!("{tid:?}|{:p}: {} has left\n", &map, addr)
             }
-            Event::Message(addr, msg) => format!("{} says: {}\n", addr, msg),
+            Event::Message(addr, msg) =>
+		format!("{tid:?}|{:p}: {} says: {}\n", &map, addr, msg),
         };
 
         // Display the event in the server process.
-        print!("{}", output);
+	print!("{}", output);
 
         // Send the event to all active clients.
         for stream in map.values_mut() {
             // Ignore errors because the client might disconnect at any point.
-            stream.write_all(output.as_bytes()).await.ok();
+	    stream.write_all(output.as_bytes()).await.ok();
         }
     }
     Ok(())
@@ -61,7 +64,7 @@ async fn read_messages(sender: Sender<Event>, client: Arc<Async<TcpStream>>) -> 
     Ok(())
 }
 
-pub fn main() -> io::Result<()> {
+pub fn main(receiver_nr: usize) -> io::Result<()> {
     smol::block_on(async {
         // Create a listener for incoming client connections.
         let listener = Async::<TcpListener>::bind(([127, 0, 0, 1], 6000))?;
@@ -72,7 +75,11 @@ pub fn main() -> io::Result<()> {
 
         // Spawn a background task that dispatches events to clients.
         let (sender, receiver) = bounded(100);
-        smol::spawn(dispatch(receiver)).detach();
+
+	for i in 0..receiver_nr {
+	    println!("Start a dispatcher {i}\n");
+            smol::spawn(dispatch(receiver.clone())).detach();
+	}
 
         loop {
             // Accept the next connection.
@@ -86,7 +93,7 @@ pub fn main() -> io::Result<()> {
                 sender.send(Event::Join(addr, client.clone())).await.ok();
 
                 // Read messages from the client and ignore I/O errors when the client quits.
-                read_messages(sender.clone(), client).await.ok();
+		read_messages(sender.clone(), client).await.ok();
 
                 // Client ends with a `Leave` event.
                 sender.send(Event::Leave(addr)).await.ok();

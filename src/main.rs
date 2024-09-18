@@ -1,22 +1,19 @@
 mod client;
 mod server;
-use smol::io;
 
-fn main() -> io::Result<()> {
-    match std::env::var("APP") {
-        Ok(val) => {
-	    match val.as_str() {
-		"S" => server::main(),
-		"C" => client::main(),
-		_ => {
-		    println!("$APP shall be `C' or `S'");
-		    Ok(())
-		},
-	    }
-	},
-        Err(e) => {
-	    println!("couldn't interpret $APP, {e}");
-	    Ok(())
-	},
+fn main() {
+
+    let app = std::env::var("APP")
+	.unwrap_or("".into());
+
+    let receivers_nr = std::env::var("RCV")
+	.ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1);
+
+    match app.as_str() {
+	"S" => server::main(receivers_nr).unwrap(),
+	"C" => client::main().unwrap(),
+	_  => println!("$APP shall be `C' or `S'"),
     }
 }
